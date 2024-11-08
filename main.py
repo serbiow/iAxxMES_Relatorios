@@ -121,14 +121,19 @@ class Relatorio(ABC):
         nome_arquivo = f"{self.__class__.__name__}_Relatorio.docx"
         doc.save(nome_arquivo)
 
-    def gerar_relatorios(self):
+    def gerar_relatorios(self, tipos_relatorio):
         self.obter_dados()
         titulo = f"Relatório de {self.__class__.__name__}" + (
             f" - Máquina {self.maquina_id}" if self.maquina_id else " - Todas as Máquinas")
-        if self.maquina_id is not None:
+
+        if 'pdf' in tipos_relatorio and self.maquina_id is not None:
             self.gerar_pdf(titulo)
-        self.gerar_excel()
-        self.gerar_word()
+
+        if 'excel' in tipos_relatorio:
+            self.gerar_excel()
+
+        if 'word' in tipos_relatorio:
+            self.gerar_word()
 
 # Relatório de RPM
 class RelatorioRPM(Relatorio):
@@ -207,6 +212,10 @@ def main():
     data_inicio = input("\nDigite a data e hora de início (AAAA-MM-DD HH:MM:SS): ")
     data_fim = input("Digite a data e hora de término (AAAA-MM-DD HH:MM:SS): ")
 
+    print("\nSelecione os tipos de relatório que deseja gerar (separados por vírgula):")
+    print("Opções: pdf, excel, word")
+    tipos_relatorio = input("Digite as opções: ").replace(" ", "").split(",")
+
     if opcao_relatorio == "1":
         relatorio = RelatorioRPM(maquina_id, data_inicio, data_fim)
     elif opcao_relatorio == "2":
@@ -215,7 +224,7 @@ def main():
         print("\nOpção de relatório inválida.")
         return
 
-    relatorio.gerar_relatorios()
+    relatorio.gerar_relatorios(tipos_relatorio)
     print("\nRelatórios gerados com sucesso.")
 
 if __name__ == "__main__":
