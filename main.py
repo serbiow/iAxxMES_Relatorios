@@ -9,20 +9,31 @@ from abc import ABC, abstractmethod
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
+
 # Configura a conexão usando SQLAlchemy
 def conectar_bd():
     conexao_str = 'mysql+mysqlconnector://root@localhost/iAxxMES'
     engine = create_engine(conexao_str)
     return engine
 
+
 # Dicionário de cores para o status
 STATUS_CORES = {
     'Rodando': '008000',  # Verde
-    'Parada': 'FF0000',   # Vermelho
-    'Setup': 'ADD8E6',    # Azul claro
+    'Parada': 'FF0000',  # Vermelho
+    'Setup': 'ADD8E6',  # Azul claro
     'Carga de fio': 'FFA500',  # Laranja
     'Sem programação': '808080'  # Cinza
 }
+
+
+# Função para calcular o tempo em cada status corretamente
+def calcular_tempo_no_status(dados):
+    dados = dados.sort_values(['maquina_id', 'data_hora'])
+    dados['tempo_no_status'] = dados.groupby('maquina_id')['data_hora'].diff().shift(-1)
+    dados['tempo_no_status'] = dados['tempo_no_status'].fillna(pd.NaT)  # Substitui o último valor por NaT
+    return dados
+
 
 # Classe base para relatórios
 class Relatorio(ABC):
@@ -55,19 +66,22 @@ class Relatorio(ABC):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Relatório Todas Máquinas" if self.maquina_id is None else f"Máquina {self.maquina_id}"
+
         colunas = list(self.dados.columns)
         sheet.append(colunas)
 
         for idx, row in self.dados.iterrows():
-            linha = [row[col] for col in colunas]
+            linha = [row[col] for col in self.dados.columns]
             sheet.append(linha)
+
             status = row['status'] if 'status' in row else None
             if status in STATUS_CORES:
                 cor = STATUS_CORES[status]
                 status_cell = sheet.cell(row=sheet.max_row, column=colunas.index('status') + 1)
                 status_cell.fill = PatternFill(start_color=cor, end_color=cor, fill_type="solid")
 
-            if self.maquina_id is None and (idx < len(self.dados) - 1) and row['maquina_id'] != self.dados.loc[idx + 1, 'maquina_id']:
+            if self.maquina_id is None and (idx < len(self.dados) - 1) and row['maquina_id'] != self.dados.loc[
+                idx + 1, 'maquina_id']:
                 sheet.append([""] * len(colunas))
 
         nome_arquivo = f"{self.__class__.__name__}_Relatorio.xlsx"
@@ -83,10 +97,13 @@ class Relatorio(ABC):
             maquinas = self.dados['maquina_id'].unique()
             for maquina in maquinas:
                 dados_maquina = self.dados[self.dados['maquina_id'] == maquina]
+                dados_maquina['tempo_no_status'] = dados_maquina['tempo_no_status'].astype(str)
+
                 doc.add_paragraph(f"Máquina {maquina}", style="Heading 1")
                 table = doc.add_table(rows=1, cols=len(dados_maquina.columns))
                 table.style = 'Table Grid'
                 hdr_cells = table.rows[0].cells
+
                 for idx, col_name in enumerate(dados_maquina.columns):
                     hdr_cells[idx].text = col_name
 
@@ -102,13 +119,16 @@ class Relatorio(ABC):
 
                 doc.add_paragraph()
         else:
-            table = doc.add_table(rows=1, cols=len(self.dados.columns))
+            dados_maquina = self.dados
+            dados_maquina['tempo_no_status'] = dados_maquina['tempo_no_status'].astype(str)
+
+            table = doc.add_table(rows=1, cols=len(dados_maquina.columns))
             table.style = 'Table Grid'
             hdr_cells = table.rows[0].cells
-            for idx, col_name in enumerate(self.dados.columns):
+            for idx, col_name in enumerate(dados_maquina.columns):
                 hdr_cells[idx].text = col_name
 
-            for _, row in self.dados.iterrows():
+            for _, row in dados_maquina.iterrows():
                 row_cells = table.add_row().cells
                 for idx, value in enumerate(row):
                     cell = row_cells[idx]
@@ -135,7 +155,8 @@ class Relatorio(ABC):
         if 'word' in tipos_relatorio:
             self.gerar_word()
 
-# Relatório de RPM
+
+# Classe Relatório de RPM
 class RelatorioRPM(Relatorio):
     def obter_dados(self):
         base_query = """
@@ -161,7 +182,8 @@ class RelatorioRPM(Relatorio):
         plt.savefig(nome_arquivo)
         plt.close()
 
-# Relatório de Status
+
+# Classe Relatório de Status
 class RelatorioStatus(Relatorio):
     def obter_dados(self):
         base_query = """
@@ -176,6 +198,7 @@ class RelatorioStatus(Relatorio):
             params['maquina_id'] = self.maquina_id
         base_query += " ORDER BY md.maquina_id, md.data_hora;"
         self.dados = pd.read_sql(base_query, self.engine, params=params)
+        self.dados = calcular_tempo_no_status(self.dados)
 
     def gerar_grafico(self, dados, titulo):
         plt.figure(figsize=(10, 5))
@@ -191,11 +214,88 @@ class RelatorioStatus(Relatorio):
         plt.savefig(nome_arquivo)
         plt.close()
 
+
+# Classe Relatório de Eficiência
+class RelatorioEficiencia(Relatorio):
+    def obter_dados(self):
+        base_query = """
+            SELECT md.maquina_id, md.data_hora, ms.descricao AS status
+            FROM maquina_dados md
+            JOIN maquina_status ms ON md.status = ms.id
+            WHERE md.data_hora BETWEEN %(data_inicio)s AND %(data_fim)s
+        """
+        params = {'data_inicio': self.data_inicio, 'data_fim': self.data_fim}
+        if self.maquina_id is not None:
+            base_query += " AND md.maquina_id = %(maquina_id)s"
+            params['maquina_id'] = self.maquina_id
+        base_query += " ORDER BY md.maquina_id, md.data_hora;"
+        self.dados = pd.read_sql(base_query, self.engine, params=params)
+        self.dados = calcular_tempo_no_status(self.dados)
+
+        # Cálculos para o relatório de eficiência
+        self.tempo_disponivel = self.dados.loc[
+            ~self.dados['status'].isin(['Setup', 'Carga de fio']), 'tempo_no_status'].sum()
+        self.tempo_rodando = self.dados.loc[self.dados['status'] == 'Rodando', 'tempo_no_status'].sum()
+        self.tempo_parada = self.dados.loc[
+            self.dados['status'].isin(['Parada', 'Sem programação']), 'tempo_no_status'].sum()
+        self.tempo_indisponivel = self.dados.loc[
+            self.dados['status'].isin(['Setup', 'Carga de fio']), 'tempo_no_status'].sum()
+
+    def gerar_grafico(self, dados, titulo):
+        # Método necessário para atender a classe abstrata, mas sem implementação
+        pass
+
+    def gerar_excel(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = f"Eficiência Máquina {self.maquina_id}" if self.maquina_id else "Eficiência Todas Máquinas"
+
+        headers = ["Máquina ID", "Tempo Disponível", "Tempo Rodando", "Tempo Parada", "Tempo Indisponível"]
+        sheet.append(headers)
+
+        row_data = [
+            str(self.maquina_id if self.maquina_id else "Todas as Máquinas"),
+            str(self.tempo_disponivel),
+            str(self.tempo_rodando),
+            str(self.tempo_parada),
+            str(self.tempo_indisponivel)
+        ]
+        sheet.append(row_data)
+
+        nome_arquivo = f"{self.__class__.__name__}_Relatorio.xlsx"
+        workbook.save(nome_arquivo)
+
+    def gerar_word(self):
+        doc = Document()
+        titulo = f'Relatório de Eficiência - Máquina {self.maquina_id}' if self.maquina_id else 'Relatório de Eficiência - Todas as Máquinas'
+        doc.add_heading(titulo, 0)
+
+        # Tabela com dados de eficiência
+        table = doc.add_table(rows=1, cols=5)
+        table.style = 'Table Grid'
+        hdr_cells = table.rows[0].cells
+        headers = ["Máquina ID", "Tempo Disponível", "Tempo Rodando", "Tempo Parada", "Tempo Indisponível"]
+        for idx, header in enumerate(headers):
+            hdr_cells[idx].text = header
+
+        # Dados
+        row_cells = table.add_row().cells
+        row_cells[0].text = str(self.maquina_id if self.maquina_id else "Todas as Máquinas")
+        row_cells[1].text = str(self.tempo_disponivel)
+        row_cells[2].text = str(self.tempo_rodando)
+        row_cells[3].text = str(self.tempo_parada)
+        row_cells[4].text = str(self.tempo_indisponivel)
+
+        nome_arquivo = f"{self.__class__.__name__}_Relatorio.docx"
+        doc.save(nome_arquivo)
+
+
 # Menu de seleção
 def main():
     print("Selecione o tipo de relatório:")
     print("1. Relatório de RPM")
     print("2. Relatório de Status")
+    print("3. Relatório de Eficiência")  # Novo relatório
 
     opcao_relatorio = input("Digite o número do tipo de relatório: ")
 
@@ -212,20 +312,26 @@ def main():
     data_inicio = input("\nDigite a data e hora de início (AAAA-MM-DD HH:MM:SS): ")
     data_fim = input("Digite a data e hora de término (AAAA-MM-DD HH:MM:SS): ")
 
-    print("\nSelecione os tipos de relatório que deseja gerar (separados por vírgula):")
-    print("Opções: pdf, excel, word")
+    if (opcao_relatorio == "1" or opcao_relatorio == "2") and opcao_maquina == "1":
+        print("Opções: pdf, excel, word")
+    else:
+        print("Opções: excel, word")
+
     tipos_relatorio = input("Digite as opções: ").replace(" ", "").split(",")
 
     if opcao_relatorio == "1":
         relatorio = RelatorioRPM(maquina_id, data_inicio, data_fim)
     elif opcao_relatorio == "2":
         relatorio = RelatorioStatus(maquina_id, data_inicio, data_fim)
+    elif opcao_relatorio == "3":
+        relatorio = RelatorioEficiencia(maquina_id, data_inicio, data_fim)
     else:
         print("\nOpção de relatório inválida.")
         return
 
     relatorio.gerar_relatorios(tipos_relatorio)
     print("\nRelatórios gerados com sucesso.")
+
 
 if __name__ == "__main__":
     main()
