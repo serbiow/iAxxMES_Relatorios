@@ -1,3 +1,4 @@
+import argparse
 import pandas as pd
 from fpdf import FPDF
 from docx import Document
@@ -9,31 +10,44 @@ from abc import ABC, abstractmethod
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
 
-
 # Configura a conexão usando SQLAlchemy
 def conectar_bd():
     conexao_str = 'mysql+mysqlconnector://root@localhost/iAxxMES'
     engine = create_engine(conexao_str)
     return engine
 
-
 # Dicionário de cores para o status
 STATUS_CORES = {
     'Rodando': '008000',  # Verde
     'Parada': 'FF0000',  # Vermelho
-    'Setup': 'ADD8E6',  # Azul claro
+    'Setup': 'ADD8E6',   # Azul claro
     'Carga de fio': 'FFA500',  # Laranja
     'Sem programação': '808080'  # Cinza
 }
-
 
 # Função para calcular o tempo em cada status corretamente
 def calcular_tempo_no_status(dados):
     dados = dados.sort_values(['maquina_id', 'data_hora'])
     dados['tempo_no_status'] = dados.groupby('maquina_id')['data_hora'].diff().shift(-1)
-    dados['tempo_no_status'] = dados['tempo_no_status'].fillna(pd.NaT)  # Substitui o último valor por NaT
+    dados['tempo_no_status'] = dados['tempo_no_status'].fillna(pd.NaT)
     return dados
 
+# Configuração dos argumentos de linha de comando
+parser = argparse.ArgumentParser(description="Geração de Relatórios")
+parser.add_argument("--tipo_relatorio", required=True, choices=["RPM", "Status", "Eficiência"], help="Tipo de relatório a ser gerado")
+parser.add_argument("--maquina_id", type=int, help="ID da máquina para o relatório (opcional para todas as máquinas)")
+parser.add_argument("--data_inicio", required=True, help="Data e hora de início no formato AAAA-MM-DD HH:MM:SS")
+parser.add_argument("--data_fim", required=True, help="Data e hora de término no formato AAAA-MM-DD HH:MM:SS")
+parser.add_argument("--formatos", required=True, nargs="+", choices=["pdf", "excel", "word"], help="Formatos de saída: pdf, excel, word")
+
+args = parser.parse_args()
+
+# Exemplo de como utilizar os argumentos
+maquina_id = args.maquina_id
+data_inicio = args.data_inicio
+data_fim = args.data_fim
+tipo_relatorio = args.tipo_relatorio
+formatos = args.formatos
 
 # Classe base para relatórios
 class Relatorio(ABC):
@@ -155,8 +169,7 @@ class Relatorio(ABC):
         if 'word' in tipos_relatorio:
             self.gerar_word()
 
-
-# Classe Relatório de RPM
+# Classe RelatorioRPM
 class RelatorioRPM(Relatorio):
     def obter_dados(self):
         base_query = """
@@ -182,8 +195,7 @@ class RelatorioRPM(Relatorio):
         plt.savefig(nome_arquivo)
         plt.close()
 
-
-# Classe Relatório de Status
+# Classe RelatorioStatus
 class RelatorioStatus(Relatorio):
     def obter_dados(self):
         base_query = """
@@ -214,8 +226,7 @@ class RelatorioStatus(Relatorio):
         plt.savefig(nome_arquivo)
         plt.close()
 
-
-# Classe Relatório de Eficiência
+# Classe RelatorioEficiencia
 class RelatorioEficiencia(Relatorio):
     def obter_dados(self):
         base_query = """
@@ -233,17 +244,13 @@ class RelatorioEficiencia(Relatorio):
         self.dados = calcular_tempo_no_status(self.dados)
 
         # Cálculos para o relatório de eficiência
-        self.tempo_disponivel = self.dados.loc[
-            ~self.dados['status'].isin(['Setup', 'Carga de fio']), 'tempo_no_status'].sum()
+        self.tempo_disponivel = self.dados.loc[~self.dados['status'].isin(['Setup', 'Carga de fio']), 'tempo_no_status'].sum()
         self.tempo_rodando = self.dados.loc[self.dados['status'] == 'Rodando', 'tempo_no_status'].sum()
-        self.tempo_parada = self.dados.loc[
-            self.dados['status'].isin(['Parada', 'Sem programação']), 'tempo_no_status'].sum()
-        self.tempo_indisponivel = self.dados.loc[
-            self.dados['status'].isin(['Setup', 'Carga de fio']), 'tempo_no_status'].sum()
+        self.tempo_parada = self.dados.loc[self.dados['status'].isin(['Parada', 'Sem programação']), 'tempo_no_status'].sum()
+        self.tempo_indisponivel = self.dados.loc[self.dados['status'].isin(['Setup', 'Carga de fio']), 'tempo_no_status'].sum()
 
     def gerar_grafico(self, dados, titulo):
-        # Método necessário para atender a classe abstrata, mas sem implementação
-        pass
+        pass  # Implementação desnecessária para Relatório de Eficiência
 
     def gerar_excel(self):
         workbook = Workbook()
@@ -270,7 +277,6 @@ class RelatorioEficiencia(Relatorio):
         titulo = f'Relatório de Eficiência - Máquina {self.maquina_id}' if self.maquina_id else 'Relatório de Eficiência - Todas as Máquinas'
         doc.add_heading(titulo, 0)
 
-        # Tabela com dados de eficiência
         table = doc.add_table(rows=1, cols=5)
         table.style = 'Table Grid'
         hdr_cells = table.rows[0].cells
@@ -278,7 +284,6 @@ class RelatorioEficiencia(Relatorio):
         for idx, header in enumerate(headers):
             hdr_cells[idx].text = header
 
-        # Dados
         row_cells = table.add_row().cells
         row_cells[0].text = str(self.maquina_id if self.maquina_id else "Todas as Máquinas")
         row_cells[1].text = str(self.tempo_disponivel)
@@ -289,49 +294,16 @@ class RelatorioEficiencia(Relatorio):
         nome_arquivo = f"{self.__class__.__name__}_Relatorio.docx"
         doc.save(nome_arquivo)
 
+# Seleção do tipo de relatório
+if tipo_relatorio == "RPM":
+    relatorio = RelatorioRPM(maquina_id, data_inicio, data_fim)
+elif tipo_relatorio == "Status":
+    relatorio = RelatorioStatus(maquina_id, data_inicio, data_fim)
+elif tipo_relatorio == "Eficiência":
+    relatorio = RelatorioEficiencia(maquina_id, data_inicio, data_fim)
+else:
+    raise ValueError("Tipo de relatório inválido.")
 
-# Menu de seleção
-def main():
-    print("Selecione o tipo de relatório:")
-    print("1. Relatório de RPM")
-    print("2. Relatório de Status")
-    print("3. Relatório de Eficiência")  # Novo relatório
-
-    opcao_relatorio = input("Digite o número do tipo de relatório: ")
-
-    print("\nSelecione uma opção para o relatório:")
-    print("1. Relatório para uma máquina específica")
-    print("2. Relatório para todas as máquinas")
-
-    opcao_maquina = input("Digite o número da opção desejada: ")
-    maquina_id = None
-
-    if opcao_maquina == "1":
-        maquina_id = int(input("\nDigite o ID da máquina: "))
-
-    data_inicio = input("\nDigite a data e hora de início (AAAA-MM-DD HH:MM:SS): ")
-    data_fim = input("Digite a data e hora de término (AAAA-MM-DD HH:MM:SS): ")
-
-    if (opcao_relatorio == "1" or opcao_relatorio == "2") and opcao_maquina == "1":
-        print("Opções: pdf, excel, word")
-    else:
-        print("Opções: excel, word")
-
-    tipos_relatorio = input("Digite as opções: ").replace(" ", "").split(",")
-
-    if opcao_relatorio == "1":
-        relatorio = RelatorioRPM(maquina_id, data_inicio, data_fim)
-    elif opcao_relatorio == "2":
-        relatorio = RelatorioStatus(maquina_id, data_inicio, data_fim)
-    elif opcao_relatorio == "3":
-        relatorio = RelatorioEficiencia(maquina_id, data_inicio, data_fim)
-    else:
-        print("\nOpção de relatório inválida.")
-        return
-
-    relatorio.gerar_relatorios(tipos_relatorio)
-    print("\nRelatórios gerados com sucesso.")
-
-
-if __name__ == "__main__":
-    main()
+# Gerar os relatórios nos formatos especificados
+relatorio.gerar_relatorios(formatos)
+print("Relatórios gerados com sucesso.")
