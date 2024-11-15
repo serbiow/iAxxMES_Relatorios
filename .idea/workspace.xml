@@ -92,6 +92,17 @@
     <option name="localTasksCounter" value="3" />
     <servers />
   </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="First Commit" />
     <option name="LAST_COMMIT_MESSAGE" value="First Commit" />

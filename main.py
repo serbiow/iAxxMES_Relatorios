@@ -9,6 +9,14 @@ from sqlalchemy import create_engine
 from abc import ABC, abstractmethod
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
+import os
+import time
+
+# Diretório de saída para os relatórios
+OUTPUT_DIR = r"C:/iAxxMES/OutputRelatorios/"
+
+# Garante que o diretório de saída exista
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Configura a conexão usando SQLAlchemy
 def conectar_bd():
@@ -27,9 +35,11 @@ STATUS_CORES = {
 
 # Função para calcular o tempo em cada status corretamente
 def calcular_tempo_no_status(dados):
+    # Faz uma cópia do DataFrame para evitar o SettingWithCopyWarning
+    dados = dados.copy()
     dados = dados.sort_values(['maquina_id', 'data_hora'])
     dados['tempo_no_status'] = dados.groupby('maquina_id')['data_hora'].diff().shift(-1)
-    dados['tempo_no_status'] = dados['tempo_no_status'].fillna(pd.NaT)
+    dados['tempo_no_status'] = dados['tempo_no_status'].fillna(pd.Timedelta(seconds=0))
     return dados
 
 # Configuração dos argumentos de linha de comando
@@ -73,8 +83,12 @@ class Relatorio(ABC):
             pdf.set_font("Arial", "B", 12)
             pdf.cell(0, 10, titulo, 0, 1, 'C')
             self.gerar_grafico(self.dados, f"Máquina {self.maquina_id}")
-            pdf.image(f"{self.__class__.__name__}_chart_maquina_{self.maquina_id}.png", x=10, y=30, w=180)
-            pdf.output(f"{self.__class__.__name__}_Relatorio.pdf")
+            chart_path = os.path.join(OUTPUT_DIR, f"{self.__class__.__name__}_chart_maquina_{self.maquina_id}.png")
+            pdf.image(chart_path, x=10, y=30, w=180)
+            pdf_output_path = os.path.join(OUTPUT_DIR, f"{self.__class__.__name__}_Relatorio.pdf")
+            pdf.output(pdf_output_path)
+            print(f"PDF gerado em: {pdf_output_path}")
+            time.sleep(1)  # Pausa para garantir gravação
 
     def gerar_excel(self):
         workbook = Workbook()
@@ -94,24 +108,25 @@ class Relatorio(ABC):
                 status_cell = sheet.cell(row=sheet.max_row, column=colunas.index('status') + 1)
                 status_cell.fill = PatternFill(start_color=cor, end_color=cor, fill_type="solid")
 
-            if self.maquina_id is None and (idx < len(self.dados) - 1) and row['maquina_id'] != self.dados.loc[
-                idx + 1, 'maquina_id']:
+            if self.maquina_id is None and (idx < len(self.dados) - 1) and row['maquina_id'] != self.dados.loc[idx + 1, 'maquina_id']:
                 sheet.append([""] * len(colunas))
 
-        nome_arquivo = f"{self.__class__.__name__}_Relatorio.xlsx"
-        workbook.save(nome_arquivo)
+        excel_output_path = os.path.join(OUTPUT_DIR, f"{self.__class__.__name__}_Relatorio.xlsx")
+        workbook.save(excel_output_path)
+        print(f"Excel gerado em: {excel_output_path}")
+        time.sleep(1)  # Pausa para garantir gravação
 
     def gerar_word(self):
         doc = Document()
-        titulo = f'Relatório de {self.__class__.__name__}' + (
-            f' - Máquina {self.maquina_id}' if self.maquina_id else ' - Todas as Máquinas')
+        titulo = f'Relatório de {self.__class__.__name__}' + (f' - Máquina {self.maquina_id}' if self.maquina_id else ' - Todas as Máquinas')
         doc.add_heading(titulo, 0)
 
         if self.maquina_id is None:
             maquinas = self.dados['maquina_id'].unique()
             for maquina in maquinas:
                 dados_maquina = self.dados[self.dados['maquina_id'] == maquina]
-                dados_maquina['tempo_no_status'] = dados_maquina['tempo_no_status'].astype(str)
+                if 'tempo_no_status' in dados_maquina.columns:
+                    dados_maquina['tempo_no_status'] = dados_maquina['tempo_no_status'].astype(str)
 
                 doc.add_paragraph(f"Máquina {maquina}", style="Heading 1")
                 table = doc.add_table(rows=1, cols=len(dados_maquina.columns))
@@ -128,13 +143,13 @@ class Relatorio(ABC):
                         cell.text = str(value)
                         if dados_maquina.columns[idx] == 'status' and value in STATUS_CORES:
                             cor_hex = STATUS_CORES[value]
-                            cell._element.get_or_add_tcPr().append(
-                                parse_xml(r'<w:shd {} w:fill="{}"/>'.format(nsdecls('w'), cor_hex)))
+                            cell._element.get_or_add_tcPr().append(parse_xml(r'<w:shd {} w:fill="{}"/>'.format(nsdecls('w'), cor_hex)))
 
                 doc.add_paragraph()
         else:
             dados_maquina = self.dados
-            dados_maquina['tempo_no_status'] = dados_maquina['tempo_no_status'].astype(str)
+            if 'tempo_no_status' in dados_maquina.columns:
+                dados_maquina['tempo_no_status'] = dados_maquina['tempo_no_status'].astype(str)
 
             table = doc.add_table(rows=1, cols=len(dados_maquina.columns))
             table.style = 'Table Grid'
@@ -149,16 +164,16 @@ class Relatorio(ABC):
                     cell.text = str(value)
                     if self.dados.columns[idx] == 'status' and value in STATUS_CORES:
                         cor_hex = STATUS_CORES[value]
-                        cell._element.get_or_add_tcPr().append(
-                            parse_xml(r'<w:shd {} w:fill="{}"/>'.format(nsdecls('w'), cor_hex)))
+                        cell._element.get_or_add_tcPr().append(parse_xml(r'<w:shd {} w:fill="{}"/>'.format(nsdecls('w'), cor_hex)))
 
-        nome_arquivo = f"{self.__class__.__name__}_Relatorio.docx"
-        doc.save(nome_arquivo)
+        word_output_path = os.path.join(OUTPUT_DIR, f"{self.__class__.__name__}_Relatorio.docx")
+        doc.save(word_output_path)
+        print(f"Word gerado em: {word_output_path}")
+        time.sleep(1)  # Pausa para garantir gravação
 
     def gerar_relatorios(self, tipos_relatorio):
         self.obter_dados()
-        titulo = f"Relatório de {self.__class__.__name__}" + (
-            f" - Máquina {self.maquina_id}" if self.maquina_id else " - Todas as Máquinas")
+        titulo = f"Relatório de {self.__class__.__name__}" + (f" - Máquina {self.maquina_id}" if self.maquina_id else " - Todas as Máquinas")
 
         if 'pdf' in tipos_relatorio and self.maquina_id is not None:
             self.gerar_pdf(titulo)
@@ -191,8 +206,8 @@ class RelatorioRPM(Relatorio):
         plt.ylabel('RPM')
         plt.xticks(rotation=45)
         plt.tight_layout()
-        nome_arquivo = f"{self.__class__.__name__}_chart_maquina_{self.maquina_id}.png"
-        plt.savefig(nome_arquivo)
+        chart_path = os.path.join(OUTPUT_DIR, f"{self.__class__.__name__}_chart_maquina_{self.maquina_id}.png")
+        plt.savefig(chart_path)
         plt.close()
 
 # Classe RelatorioStatus
@@ -222,8 +237,8 @@ class RelatorioStatus(Relatorio):
         plt.xticks(rotation=45)
         plt.yticks(ticks=range(len(status_labels)), labels=status_labels)
         plt.tight_layout()
-        nome_arquivo = f"{self.__class__.__name__}_chart_maquina_{self.maquina_id}.png"
-        plt.savefig(nome_arquivo)
+        chart_path = os.path.join(OUTPUT_DIR, f"{self.__class__.__name__}_chart_maquina_{self.maquina_id}.png")
+        plt.savefig(chart_path)
         plt.close()
 
 # Classe RelatorioEficiencia
@@ -269,8 +284,8 @@ class RelatorioEficiencia(Relatorio):
         ]
         sheet.append(row_data)
 
-        nome_arquivo = f"{self.__class__.__name__}_Relatorio.xlsx"
-        workbook.save(nome_arquivo)
+        excel_output_path = os.path.join(OUTPUT_DIR, f"{self.__class__.__name__}_Relatorio.xlsx")
+        workbook.save(excel_output_path)
 
     def gerar_word(self):
         doc = Document()
@@ -291,8 +306,8 @@ class RelatorioEficiencia(Relatorio):
         row_cells[3].text = str(self.tempo_parada)
         row_cells[4].text = str(self.tempo_indisponivel)
 
-        nome_arquivo = f"{self.__class__.__name__}_Relatorio.docx"
-        doc.save(nome_arquivo)
+        word_output_path = os.path.join(OUTPUT_DIR, f"{self.__class__.__name__}_Relatorio.docx")
+        doc.save(word_output_path)
 
 # Seleção do tipo de relatório
 if tipo_relatorio == "RPM":
