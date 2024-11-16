@@ -124,7 +124,7 @@ class Relatorio(ABC):
         if self.maquina_id is None:
             maquinas = self.dados['maquina_id'].unique()
             for maquina in maquinas:
-                dados_maquina = self.dados[self.dados['maquina_id'] == maquina]
+                dados_maquina = self.dados[self.dados['maquina_id'] == maquina].copy()  # Garantir cópia explícita
                 if 'tempo_no_status' in dados_maquina.columns:
                     dados_maquina['tempo_no_status'] = dados_maquina['tempo_no_status'].astype(str)
 
@@ -147,7 +147,7 @@ class Relatorio(ABC):
 
                 doc.add_paragraph()
         else:
-            dados_maquina = self.dados
+            dados_maquina = self.dados.copy()  # Garantir cópia explícita
             if 'tempo_no_status' in dados_maquina.columns:
                 dados_maquina['tempo_no_status'] = dados_maquina['tempo_no_status'].astype(str)
 
@@ -169,7 +169,7 @@ class Relatorio(ABC):
         word_output_path = os.path.join(OUTPUT_DIR, f"{self.__class__.__name__}_Relatorio.docx")
         doc.save(word_output_path)
         print(f"Word gerado em: {word_output_path}")
-        time.sleep(1)  # Pausa para garantir gravação
+        time.sleep(1)
 
     def gerar_relatorios(self, tipos_relatorio):
         self.obter_dados()
@@ -184,7 +184,7 @@ class Relatorio(ABC):
         if 'word' in tipos_relatorio:
             self.gerar_word()
 
-# Classe RelatorioRPM
+# Classes específicas
 class RelatorioRPM(Relatorio):
     def obter_dados(self):
         base_query = """
@@ -210,7 +210,6 @@ class RelatorioRPM(Relatorio):
         plt.savefig(chart_path)
         plt.close()
 
-# Classe RelatorioStatus
 class RelatorioStatus(Relatorio):
     def obter_dados(self):
         base_query = """
@@ -241,7 +240,6 @@ class RelatorioStatus(Relatorio):
         plt.savefig(chart_path)
         plt.close()
 
-# Classe RelatorioEficiencia
 class RelatorioEficiencia(Relatorio):
     def obter_dados(self):
         base_query = """
@@ -258,14 +256,13 @@ class RelatorioEficiencia(Relatorio):
         self.dados = pd.read_sql(base_query, self.engine, params=params)
         self.dados = calcular_tempo_no_status(self.dados)
 
-        # Cálculos para o relatório de eficiência
         self.tempo_disponivel = self.dados.loc[~self.dados['status'].isin(['Setup', 'Carga de fio']), 'tempo_no_status'].sum()
         self.tempo_rodando = self.dados.loc[self.dados['status'] == 'Rodando', 'tempo_no_status'].sum()
         self.tempo_parada = self.dados.loc[self.dados['status'].isin(['Parada', 'Sem programação']), 'tempo_no_status'].sum()
         self.tempo_indisponivel = self.dados.loc[self.dados['status'].isin(['Setup', 'Carga de fio']), 'tempo_no_status'].sum()
 
     def gerar_grafico(self, dados, titulo):
-        pass  # Implementação desnecessária para Relatório de Eficiência
+        pass
 
     def gerar_excel(self):
         workbook = Workbook()
